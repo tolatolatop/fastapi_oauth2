@@ -1,13 +1,16 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Request, Response
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, HTTPException, Request, Response, Depends
+from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.starlette_client import OAuth
-from dotenv import load_dotenv
 from redis_handler import RedisHandler
+from dotenv import load_dotenv
 import os
 
 load_dotenv()
 
 app = FastAPI()
+
+# 添加 SessionMiddleware，并为其设置加密密钥
+app.add_middleware(SessionMiddleware, secret_key=os.getenv("SECRET_KEY"))
 
 # Redis handler
 redis_handler = RedisHandler()
@@ -34,27 +37,33 @@ async def login(request: Request):
 async def auth_callback(request: Request, response: Response):
     # 获取 OAuth2 token
     token = await oauth.github.authorize_access_token(request)
-    user_info = await oauth.github.parse_id_token(request, token)
+
+    # 使用 access_token 获取用户信息
+    user_info = await oauth.github.get("https://api.github.com/user", token=token)
 
     if not user_info:
         raise HTTPException(
             status_code=400, detail="Failed to retrieve user information"
         )
 
-    username = user_info.get("login")
+    username = user_info.json().get("login")
 
     # 生成 UID 并存储 session
-    uid = redis_handler.create_user_session(username)
+    uid = await redis_handler.create_user_session(username)
+
+    # 将用户的 UID 存储到会话
+    request.session["uid"] = uid
 
     # 设置 cookie，保存用户的 UID
     response.set_cookie(key="uid", value=uid)
 
-    return {"message": "Login successful", "user": user_info, "uid": uid}
+    return {"message": "Login successful", "user": user_info.json(), "uid": uid}
 
 
 @app.get("/user/profile")
 async def get_user_profile(request: Request):
-    uid = request.cookies.get("uid")
+    # 从会话中获取 UID
+    uid = request.session.get("uid")
 
     if not uid:
         raise HTTPException(status_code=401, detail="Unauthorized")
