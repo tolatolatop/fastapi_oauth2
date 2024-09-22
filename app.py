@@ -68,7 +68,7 @@ async def get_user_profile(request: Request):
     if not uid:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    user_profile = redis_handler.get_user_session(uid)
+    user_profile = await redis_handler.get_user_session(uid)
 
     if not user_profile:
         raise HTTPException(status_code=404, detail="Profile not found")
